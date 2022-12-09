@@ -1,0 +1,24 @@
+# local package
+-e .
+
+# external
+click
+gymnasium
+matplotlib
+networkx
+python-dotenv>=0.5.1
+scipy
+torch
+tqdm
+
+# notebooks
+jupyter
+jupytext
+
+# linting
+black
+flake8
+
+# testing
+pytest
+ipytest
