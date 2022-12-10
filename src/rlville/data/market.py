@@ -12,11 +12,13 @@ import re
 import string
 
 import click
+import numpy as np
 import pandas as pd
 import requests
 
 from bs4 import BeautifulSoup
 from bs4.element import Tag
+from matplotlib import colors as mpcolors, image as mpimage
 
 
 @click.group()
@@ -26,9 +28,14 @@ def main():
 
 @main.command()
 def download():
+    root = "https://www.avemariasongs.org/games/FarmVille/"
+
     # Prepare the target
     os.makedirs("./data/images/seeds/", exist_ok=True)
-    root = "https://www.avemariasongs.org/games/FarmVille/"
+
+    # An empty green pasture: (85 x 85) icon of 3-channel yellowgreen
+    empty = np.full((85, 85, 3), fill_value=mpcolors.to_rgb("yellowgreen"))
+    mpimage.imsave("./data/images/seeds/empty.jpg", empty)
 
     def sluggify(s: str):
         """
@@ -79,7 +86,8 @@ def download():
 
     # Download the images
     header = ("id", "icon", "name", "revenue", "cost", "growtime")
-    lines = ["\t".join(header)]
+    noop = ("0", "./data/images/seeds/empty.jpg", "empty", "0", "0", "1")
+    lines = ["\t".join(header), "\t".join(noop)]
 
     for i, row in enumerate(rows):
         image = row[0].select_one("img").attrs["src"]
@@ -94,13 +102,13 @@ def download():
             row[-1].text.strip(),
         )
 
-        row = tuple(map(str, (i, filepath, slug, revenue, cost, growtime)))
+        row = tuple(map(str, (i + 1, filepath, slug, revenue, cost, growtime)))
         click.echo(str(row))
         lines.append("\t".join(row))
 
     # Write the data to a tsv
     with open("./data/processed/market.tsv", "w+") as target:
-        target.writelines(lines)
+        target.write("\n".join(lines))
 
 
 @main.command()
