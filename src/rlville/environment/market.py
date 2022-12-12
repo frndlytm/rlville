@@ -1,5 +1,6 @@
-import gymnasium as gym
 import pandas as pd
+
+from rlville.constants import DATA
 
 
 class Market:
@@ -11,14 +12,20 @@ class Market:
         and get deterministic results.
     """
     def __init__(self, n: int | None = None, seed: int | None = None):
-        df = pd.read_csv("./data/processed/market.tsv", sep="\t", index_col="id")
+        df = pd.read_csv(f"{DATA}/processed/market.tsv", sep="\t", index_col="id")
         n = n or df.index.size
         assert n <= df.index.size
 
         # Always include the empty action so the agent has something to do at
         # every time step. And sample the rest of the n-1 options from the market
-        empty, sample = df.iloc[0], df.iloc[1:].sample(n - 1, random_state=seed)
-        self.db = sample.append(empty).sort_index().reset_index()
+        empty = df.iloc[0].to_frame().T
+        sample = df.iloc[1:].sample(n - 1, random_state=seed)
+        self.db = (
+            pd.concat([sample, empty])
+            .sort_index()
+            .reset_index()
+            .rename(columns={"index": "id"})
+        )
 
     def __len__(self):
         # Returns the number of available actions
@@ -36,9 +43,11 @@ class Market:
         :return: A column from the market database, like "cost" or "revenue"
         """
         # Get a column from the database as a numpy array
-        if name in self.db.columns:
-            return getattr(self.db, name).to_numpy()
+        db = super().__getattribute__("db")
+        if name in db.columns:
+            return getattr(db, name).to_numpy()
 
         # otherwise, disallow the access
         else:
-            raise AttributeError("Only allowed to access columns from the market db")
+            return super().__getattribute__(name)
+

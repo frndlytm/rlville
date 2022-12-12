@@ -1,5 +1,5 @@
-import random
-from typing import Optional, Union, List, Tuple
+import os
+from typing import List, Tuple
 
 import gymnasium as gym
 import numpy as np
@@ -8,9 +8,10 @@ from gymnasium.core import RenderFrame, ActType, ObsType
 from numpy.typing import NDArray
 from matplotlib import image as mpimage, pyplot
 
-from rlville.market import Market
+from rlville.constants import PROJECT
+from rlville.environment.market import Market
+from rlville.types import Shape
 
-Shape = Tuple[int, ...]
 Step = Tuple[ObsType, float, bool, bool, dict]
 
 
@@ -63,30 +64,60 @@ class RLVille(gym.Env):
                 np.zeros(self.n_resources),
                 np.ones(self.n_resources),
                 seed=seed,
-                dtype=float,
             ),
         })
 
         self.balance = starting_balance
-        self.resources = np.zeros(self.n_resources)
-        self.timers = np.zeros(self.n_resources)
+        self.resources = np.zeros(self.n_resources, dtype=int)
+        self.timers = np.zeros(self.n_resources, dtype=int)
 
     def reset(self, seed: int | None = None, options: dict | None = None):
         self.balance = self.starting_balance
-        self.resources = np.zeros(self.n_resources)
-        self.timers = np.zeros(self.n_resources)
+        self.resources = np.zeros(self.n_resources, dtype=int)
+        self.timers = np.zeros(self.n_resources, dtype=int)
+        return self.observe(), {}
+
+    @property
+    def done(self):
+        # GAME OVER if...
+        #     1. there are no crops on any resources, AND
+        #     2. there are no available actions according to our balance
+        return (self.resources == 0).all() and (self.actions == 0).all()
+
+    @property
+    def actions(self) -> NDArray[ActType]:
+        """
+        :return:
+            The actions currently available to the Agent given the current
+            balance of the environment. This ensures that the agent cannot
+            overdraft
+        """
+        return np.argwhere(self.market.cost <= self.balance).ravel()
+
+    @property
+    def best_action(self) -> int:
+        # When the resources are full, it is always best to do nothing
+        if np.count_nonzero(self.resources) == self.n_resources:
+            return 0
+
+        # Get the best reward per time
+        reward_per_time = (self.market.cost + self.market.revenue) / self.market.growtime
+        # Get the available actions
+        available_reward_per_time = reward_per_time[self.actions]
+        # Get the best action based on rewards per time of the available actions
+        return np.argmax(available_reward_per_time)
 
     def observe(self):
         """
         Return tha available balance, the observation, and the percents
         completed for all the resources.
 
-        [% completed]
+        [% completed](crop) = 100% - [time left / total grow time(crop)]
         """
         return {
             "balance": self.balance,
             "resources": self.resources,
-            "timers": 1 - (self.timers / self.market.growtimes[self.resources])
+            "timers": 1 - (self.timers / self.market.growtime[self.resources])
         }
 
     @property
@@ -95,8 +126,8 @@ class RLVille(gym.Env):
 
     @property
     def free_space(self) -> NDArray:
-        """A free space is any resource that has the """
-        return np.argwhere(self.resources == 0).squeeze()
+        """A free space is any resource that has empty crop on it"""
+        return np.argwhere(self.resources == 0).ravel()
 
     def harvest(self) -> float:
         # Get an index of crops that are ready
@@ -117,11 +148,13 @@ class RLVille(gym.Env):
         self.resources[resources] = 0
 
     def step(self, action: ActType) -> Step:
+        reward = 0
+
         # Step all the timers down
-        np.clip(self.timers - 1, a_min=0, out=self.timers)
+        np.clip(self.timers - 1, a_min=0, a_max=np.inf, out=self.timers)
 
         # Harvest any ready resources
-        reward = self.harvest()
+        reward += self.harvest()
 
         # For any action other than "empty"...
         if action != 0:
@@ -129,37 +162,42 @@ class RLVille(gym.Env):
             # This ensures there is always an available resource when the agent
             # asks for one, and it penalizes the agent according to FarmVille's
             # plowing dynamics
-            if np.free_space.empty():
+            if self.free_space.size == 0:
                 self.plow(1)
                 reward -= 15
 
             # Get the next available resource and plant it with the action
             next_resource = self.free_space[0]
             self.resources[next_resource] = action
+            reward += self.market.cost[action]
 
         self.balance += reward
-        return self.observe(), reward, False, False, {}
+        return self.observe(), reward, self.done, False, {}
 
     def render(self) -> RenderFrame | List[RenderFrame] | None:
         pyplot.clf()
 
         # A figure is a line of crops, i.e. a bunch a squares
+        figure = pyplot.figure()
         subplot_kw = {"xticks": [], "yticks": []}
-        figure, axes = pyplot.subplots(
-            1, self.n_resources, sharey="row", subplot_kw=subplot_kw,
+        axes = figure.subplots(
+            *(1, self.n_resources),
+            sharey="row",
+            squeeze=False,
+            subplot_kw=subplot_kw
         )
 
         # Sub-plot the icon image for each of the resources
         for i in range(self.n_resources):
-            axis, resource, timer = (
-                axes.flat[i], self.resources[i], self.timers[i],
-            )
+            axis, resource, timer = axes.flat[i], self.resources[i], self.timers[i]
 
             # Render the icon from the data directory
-            image = mpimage.imread(self.market[resource]["icon"])
+            icon = os.path.join(PROJECT, self.market[resource]["icon"])
+            image = mpimage.imread(icon)
 
             # Set this specific square to the image
             axis.set_xlabel(f"timer={timer}")
             axis.imshow(image)
 
         figure.show()
+        return

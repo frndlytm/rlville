@@ -3,7 +3,7 @@ import queue
 import gymnasium as gym
 import networkx as nx
 
-from .agent import Agent
+from .agents import Agent
 
 
 class AgentSystem:
